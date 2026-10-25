@@ -59,6 +59,8 @@ git clone https://github.com/chrismaree/open-code-mcp-on-demand.git
 ln -s "$PWD/open-code-mcp-on-demand/mcp-on-demand.ts" ~/.config/opencode/plugins/mcp-on-demand.ts
 ```
 
+OpenCode watches the symlink, not its target, so after editing the repo copy reload with `touch -h ~/.config/opencode/plugins/mcp-on-demand.ts`.
+
 </details>
 
 ## How it works
