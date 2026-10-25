@@ -1,0 +1,34 @@
+{
+  "enabled": true,
+  "alwaysOn": ["context7"],
+  "localIdleHours": 6,
+  "groups": {
+    "browser": {
+      "description": "Browser automation: open pages, click, fill forms, take screenshots, read the DOM.",
+      "servers": ["playwright", "chrome-devtools"]
+    },
+    "research": {
+      "description": "Web research beyond normal search: deep search, crawling and page extraction.",
+      "servers": ["exa", "tavily", "firecrawl"]
+    },
+    "code-hosting": {
+      "description": "GitHub repositories, pull requests, issues and CI runs.",
+      "servers": ["github"]
+    },
+    "tracking": {
+      "description": "Issue trackers and error monitoring: tickets, sprints, production errors.",
+      "servers": ["linear", "jira", "sentry"]
+    },
+    "database": {
+      "description": "Database access: SQL queries, schema inspection, migrations, logs.",
+      "servers": ["supabase", "postgres"]
+    },
+    "workspace": {
+      "description": "Team workspace: Slack messages, Notion pages, Google Drive files.",
+      "servers": ["slack", "notion", "google_drive"]
+    }
+  },
+  "autoConnect": [
+    { "directory": "~/work/my-web-app*", "groups": ["browser"] }
+  ]
+}

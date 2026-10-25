@@ -1,0 +1,4 @@
+# Personal settings: they list your own MCP servers, keep them out of the repo.
+mcp-on-demand.json
+node_modules/
+.DS_Store
