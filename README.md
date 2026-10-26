@@ -19,9 +19,10 @@ By default OpenCode connects every configured MCP server for every directory you
 | | Without | With mcp-on-demand |
 |---|---|---|
 | Local MCP processes | one set per open directory, always running | only the servers a session asked for |
+| Other sessions' servers | every session sees every connected server | each session sees and calls only its own |
 | Prompt overhead | every server's instructions, every turn | a short list of groups, plus instructions for connected servers only |
 | Using a server | always there | agent calls `mcp_connect("browser")`, tools appear on its next step |
-| Forgotten servers | run until you quit | idle local servers stop after 6 hours |
+| Forgotten servers | run until you quit | dropped after 1 hour unused, local and remote |
 
 Real-world example from the author's machine: **~70 local MCP processes (several GB) down to 0** at idle, with 25 servers still one call away.
 
@@ -83,21 +84,22 @@ flowchart LR
     Agent -. "always available" .-> A
 ```
 
-1. **At startup** the plugin marks every configured MCP server as disabled, except those in `alwaysOn` (and any groups you auto-connect for that directory).
+1. **At startup** the plugin marks every configured MCP server as disabled, except those in `alwaysOn`.
 2. **The agent sees a short catalog** of your groups in its system prompt, plus three tools: `mcp_connect`, `mcp_disconnect` and `mcp_status`.
-3. **When a task needs a server**, the agent calls `mcp_connect` with a group or server name. OpenCode connects it and the tools appear from the agent's next step.
-4. **Idle local servers stop.** Local (stdio) servers with no tool calls for `localIdleHours` and nothing in flight are turned off again. Remote servers stay connected; they cost no memory.
-5. **Recovery is automatic.** If tools are missing (idle stop, restart), the agent just calls `mcp_connect` again. It's safe to repeat.
+3. **When a task needs a server**, the agent calls `mcp_connect` with a group or server name. The connection belongs to **that session**; OpenCode starts the server and the tools appear from the agent's next step.
+4. **Sessions only see their own servers.** OpenCode runs MCP servers per directory, so a server another session connected is running, but the plugin removes it from this session's Code Mode catalog, MCP instructions and tool list, and refuses its calls with "call mcp_connect first". Subagents start lean too (see `inheritToChildSessions`).
+5. **Unused servers are dropped.** A session drops a server after `idleMinutes` (default 60) without a call to it and nothing in flight; once no session holds a server, it is turned off. This applies to local and remote servers: remote ones cost no memory, but every connected server adds text to every prompt.
+6. **Recovery is automatic.** If tools are missing (idle drop, restart), the agent calls `mcp_connect` again. It's safe to repeat.
 
 ### A server's lifecycle
 
 ```mermaid
 stateDiagram-v2
     [*] --> Dormant: plugin loads
-    Dormant --> Connected: agent calls mcp_connect
-    Connected --> Connected: tool calls reset the idle timer
-    Connected --> Dormant: mcp_disconnect
-    Connected --> Dormant: local server idle for localIdleHours
+    Dormant --> Connected: a session calls mcp_connect
+    Connected --> Connected: that session's tool calls reset its idle timer
+    Connected --> Dormant: the last session holding it disconnects
+    Connected --> Dormant: unused for idleMinutes by every session holding it
     Dormant --> Connected: agent reconnects when tools are missing
 ```
 
@@ -109,9 +111,9 @@ It's a single file built only on OpenCode's native V2 plugin API: no proxy, gate
 |---|---|
 | Turn servers on and off | `ctx.mcp.transform` + `ctx.mcp.reload()` |
 | Agent-facing tools | `ctx.tool.transform` |
-| Group catalog in the prompt | `ctx.session.hook("context")` |
-| Usage tracking for idle stop (including Code Mode) | `ctx.tool.hook("execute.before" / "execute.after")` |
-| Per-directory state | `ctx.location.directory` |
+| Group catalog in the prompt; per-session filtering of the catalog, MCP instructions and tools | `ctx.session.hook("context")` |
+| Usage tracking and per-session call checks (Code Mode reports each MCP call under the server's tool name) | `ctx.tool.hook("execute.before" / "execute.after")` |
+| Per-directory server state, per-session connections | `ctx.location.directory`, the hooks' `sessionID` |
 
 ## Generate your settings
 
@@ -135,7 +137,8 @@ Your settings depend on which MCP servers *you* have, so there's nothing to copy
 {
   "enabled": true,                 // false = plugin does nothing, servers keep their configured state
   "alwaysOn": ["context7"],        // never made dormant
-  "localIdleHours": 6,             // stop idle local servers after this long
+  "idleMinutes": 60,               // a session drops a server it has not used for this long
+  "inheritToChildSessions": false, // subagents start without their parent's servers
   "groups": {
     "browser": {
       "description": "Browser automation: open pages, click, fill forms, take screenshots.",
@@ -152,10 +155,11 @@ Your settings depend on which MCP servers *you* have, so there's nothing to copy
 |---|---|---|
 | `enabled` | `true` | Set `false` to switch the plugin off without uninstalling. |
 | `alwaysOn` | `[]` | Server names that are never touched. |
-| `localIdleHours` | `6` | Idle timeout for local (stdio) servers. Remote servers are never stopped by the timer. |
-| `localIdleMinutes` | — | Overrides `localIdleHours`. Handy for testing the idle stop. |
+| `idleMinutes` | `60` | A session drops a server after this long without a call to it (nothing in flight). A server stops once no session holds it. Local and remote alike. |
+| `inheritToChildSessions` | `false` | `true`: a child session (subagent) starts with its parent's servers. `false`: it starts lean and connects what it needs. |
+| `localIdleHours`, `localIdleMinutes` | — | Deprecated; read only when `idleMinutes` is not set. |
 | `groups` | `{}` | Group name → `{ description, servers }`. Servers not in a group are still dormant and connectable by name. |
-| `autoConnect` | `[]` | `directory` matches the directory and its subdirectories; `*` matches within one path segment. |
+| `autoConnect` | `[]` | Groups every new session in a matching directory starts with. `directory` matches the directory and its subdirectories; `*` matches within one path segment. |
 
 **Applying changes:** run `touch ~/.config/opencode/plugins/mcp-on-demand.ts`. The plugin reloads; editing only the JSON is not picked up. Reloading resets on-demand connections, and agents reconnect as needed.
 
@@ -169,9 +173,9 @@ Add it to OpenCode as usual (`opencode mcp add …`). It starts **dormant automa
 
 | Tool | What it does |
 |---|---|
-| `mcp_connect({ targets })` | Turns on groups or servers for the current directory and waits until they're connected. Idempotent. |
-| `mcp_disconnect({ targets })` | Turns them back off. |
-| `mcp_status()` | Lists groups and every server's state: always-on, on-demand (on) or dormant. |
+| `mcp_connect({ targets })` | Connects groups or servers for the current session, waits until they're connected and lists their tools. Idempotent. |
+| `mcp_disconnect({ targets })` | Drops them for the current session; a server stops once no session holds it. |
+| `mcp_status()` | Lists groups and every server's state for this session: always-on, connected, held by another session, or dormant. |
 
 ## FAQ
 
@@ -182,20 +186,26 @@ It only changes server state at runtime and never edits `opencode.json`. If it f
 OpenCode snapshots the tool list per model request, so tools from a newly connected server appear on the agent's next step. The `mcp_connect` result tells the agent this.
 
 **Do connections affect other sessions?**
-Yes, within the same directory. OpenCode connects MCP servers per directory, so all sessions in that directory share them. A disconnect or idle stop in one affects the others, which simply reconnect.
+No. OpenCode runs MCP servers per directory, but each session only sees and calls the servers it connected. One gap: Code Mode's built-in `search(...)` can still list another session's tool names; calling them is refused.
+
+**Does reconnecting cost anything?**
+One `mcp_connect` call. Connecting or dropping a server changes this session's prompt, so its next request reads the conversation again instead of using the provider's prompt cache. After an hour away the cache has usually expired anyway.
+
+**What if OpenCode changes how it renders the catalog?**
+The filters only remove blocks they recognise exactly (`- name (N tools …)` catalog entries and `<server name="…">` instruction blocks). Anything else is left as is, so a format change means extra text in the prompt, never a broken one. Calls to other sessions' servers are still refused.
 
 **Is state lost when a local server stops?**
-Yes. A restarted server starts fresh (for example, an open browser page is gone). That's why the idle timeout is long.
+Yes. A restarted server starts fresh (for example, an open browser page is gone). Raise `idleMinutes`, or keep such a server in `alwaysOn`, if that matters.
 
 **Where are the logs?**
-`~/.local/share/opencode/log/mcp-on-demand.log`: loads, connects, tool use and idle stops.
+`~/.local/share/opencode/log/mcp-on-demand.log`: loads, connects, tool use, refused calls and idle drops, each with its session.
 
 **Uninstall?**
 `rm ~/.config/opencode/plugins/mcp-on-demand.ts` (and optionally `~/.config/opencode/mcp-on-demand.json`), then restart OpenCode.
 
 ## Compatibility
 
-Built for the **OpenCode V2 plugin API**, tested on OpenCode v2.1.2. Related upstream discussions: [lazy MCP loading (#8277)](https://github.com/anomalyco/opencode/issues/8277) and [duplicate MCP processes per session (#29939)](https://github.com/anomalyco/opencode/issues/29939). If OpenCode ships native lazy loading, this plugin may become unnecessary.
+Built for the **OpenCode V2 plugin API**, tested on OpenCode v2.1.2. Tests for the prompt filters: `npm test` (`node --test test/*.test.ts`) (Node 22.18+ runs TypeScript directly). Related upstream discussions: [lazy MCP loading (#8277)](https://github.com/anomalyco/opencode/issues/8277) and [duplicate MCP processes per session (#29939)](https://github.com/anomalyco/opencode/issues/29939). If OpenCode ships native lazy loading, this plugin may become unnecessary.
 
 ## License
 

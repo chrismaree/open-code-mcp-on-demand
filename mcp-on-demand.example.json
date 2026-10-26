@@ -1,7 +1,8 @@
 {
   "enabled": true,
   "alwaysOn": ["context7"],
-  "localIdleHours": 6,
+  "idleMinutes": 60,
+  "inheritToChildSessions": false,
   "groups": {
     "browser": {
       "description": "Browser automation: open pages, click, fill forms, take screenshots, read the DOM.",
