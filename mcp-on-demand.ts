@@ -96,6 +96,10 @@ export const filterInstructions = (text: string, hidden: (name: string) => boole
 export const filterText = (text: string, hidden: (name: string) => boolean) =>
   filterInstructions(filterCatalog(text, hidden), hidden)
 
+/** A server needs a reload when OpenCode has it disabled or has no record of it; failed or
+ * auth-pending servers are left alone (reloading would not fix them). */
+export const needsReload = (status: any) => status === undefined || status?.status === "disabled"
+
 const CODEMODE_REF = /tools\s*(?:\.\s*([A-Za-z0-9_$-]+)|\[\s*["'`]([^"'`]+)["'`]\s*\])/g
 
 export default {
@@ -297,9 +301,24 @@ export default {
           const running = held()
           const started = servers.filter((server) => !running.has(server))
           holdServers(sessionID, servers)
-          if (started.length > 0) await ctx.mcp.reload()
-          log(directory, `connect ${servers.join(",")} (started: ${started.join(",") || "-"}) session=${sessionID}`)
-          const current = await waitForSettled(servers, context?.signal)
+          // Trust OpenCode's state, not ours: a server we think is held can still be disabled
+          // (e.g. after a config reload replayed an older setup). Reload whenever a requested
+          // server is not actually enabled, so a stale view can never leave it stuck.
+          const before = await statuses().catch(() => new Map())
+          const notRunning = servers.filter((server) => !started.includes(server) && needsReload(before.get(server)))
+          if (started.length > 0 || notRunning.length > 0) await ctx.mcp.reload()
+          log(
+            directory,
+            `connect ${servers.join(",")} (started: ${started.join(",") || "-"}${notRunning.length ? `; healed: ${notRunning.join(",")}` : ""}) session=${sessionID}`,
+          )
+          let current = await waitForSettled(servers, context?.signal)
+          // Still disabled after one reload: replay the transform once more and wait again.
+          const stuck = servers.filter((server) => current.get(server)?.status === "disabled")
+          if (stuck.length > 0) {
+            log(directory, `connect retry ${stuck.join(",")} still disabled session=${sessionID}`)
+            await ctx.mcp.reload()
+            current = await waitForSettled(servers, context?.signal)
+          }
           const lines = servers.map((server) => `- ${server}: ${describe(current.get(server))}`)
           if (unknown.length > 0) lines.push(`Unknown targets ignored: ${unknown.join(", ")}`)
           return {

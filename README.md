@@ -191,6 +191,9 @@ No. OpenCode runs MCP servers per directory, but each session only sees and call
 **Does reconnecting cost anything?**
 One `mcp_connect` call. Connecting or dropping a server changes this session's prompt, so its next request reads the conversation again instead of using the provider's prompt cache. After an hour away the cache has usually expired anyway.
 
+**A server shows as disabled even after `mcp_connect`?**
+`mcp_connect` checks OpenCode's actual server state and reloads whenever a requested server is not enabled, then retries once if it is still disabled, so a stale view in the plugin cannot leave a server stuck. Servers that failed or need sign-in are reported as such; reloading would not fix them.
+
 **What if OpenCode changes how it renders the catalog?**
 The filters only remove blocks they recognise exactly (`- name (N tools …)` catalog entries and `<server name="…">` instruction blocks). Anything else is left as is, so a format change means extra text in the prompt, never a broken one. Calls to other sessions' servers are still refused.
 
