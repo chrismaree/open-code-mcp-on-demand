@@ -1,11 +1,14 @@
 {
   "name": "opencode-mcp-on-demand",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "OpenCode plugin: MCP servers stay dormant until your agent needs them.",
   "type": "module",
   "exports": {
     ".": "./mcp-on-demand.ts"
   },
   "license": "MIT",
-  "repository": "github:chrismaree/open-code-mcp-on-demand"
+  "repository": "github:chrismaree/open-code-mcp-on-demand",
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  }
 }
