@@ -100,6 +100,16 @@ export const filterText = (text: string, hidden: (name: string) => boolean) =>
  * auth-pending servers are left alone (reloading would not fix them). */
 export const needsReload = (status: any) => status === undefined || status?.status === "disabled"
 
+/** The server a tool id belongs to: the longest matching `<server>_` prefix, so with servers
+ * `firecrawl` and `firecrawl_lab`, `firecrawl_lab_scrape` belongs to `firecrawl_lab` only. */
+export const ownerOf = (tool: string, names: Iterable<string>) => {
+  let owner: string | undefined
+  for (const name of names) {
+    if (tool.startsWith(`${name}_`) && (owner === undefined || name.length > owner.length)) owner = name
+  }
+  return owner
+}
+
 const CODEMODE_REF = /tools\s*(?:\.\s*([A-Za-z0-9_$-]+)|\[\s*["'`]([^"'`]+)["'`]\s*\])/g
 
 export default {
@@ -133,6 +143,8 @@ export default {
     // added MCP servers start off without touching this plugin. Filled by the transform.
     const managed = new Set<string>()
     const byNormalized = new Map<string, string>()
+    // Every server, alwaysOn included, so a tool is never credited to a shorter-named server.
+    const allByNormalized = new Map<string, string>()
     const grouped = new Set(Object.values(groups).flatMap((group) => group.servers))
 
     // sessionID -> server -> last use (ms). A server runs while any session holds it.
@@ -180,6 +192,7 @@ export default {
     // Transform callbacks run lazily on the next registry read, so seed the managed set now.
     const listed = await ctx.mcp.list().catch(() => undefined)
     for (const server of (listed?.data ?? listed ?? []) as any[]) {
+      if (server?.name) allByNormalized.set(normalize(server.name), server.name)
       if (!server?.name || alwaysOn.has(server.name)) continue
       managed.add(server.name)
       byNormalized.set(normalize(server.name), server.name)
@@ -189,6 +202,7 @@ export default {
     await ctx.mcp.transform((editor: any) => {
       const running = held()
       for (const [name] of editor.list()) {
+        allByNormalized.set(normalize(name), name)
         if (alwaysOn.has(name)) continue
         managed.add(name)
         byNormalized.set(normalize(name), name)
@@ -201,6 +215,13 @@ export default {
     log(directory, `loaded; managed=${managed.size} idle=${idleMs / 60_000}m inherit=${inherit} auto=${[...autoServers].join(",") || "-"}`)
 
     const serverFor = (name: string) => byNormalized.get(name) ?? (managed.has(name) ? name : undefined)
+
+    /** The managed server that owns a tool id, or undefined for alwaysOn and non-MCP tools. */
+    const toolOwner = (tool: string) => {
+      const name = ownerOf(tool, allByNormalized.keys())
+      const server = name === undefined ? undefined : allByNormalized.get(name)
+      return server !== undefined && managed.has(server) ? server : undefined
+    }
 
     const resolve = (targets: string[]) => {
       const servers = new Set<string>()
@@ -277,7 +298,7 @@ export default {
         const prefix = `${normalize(server)}_`
         const names = tools
           .map((tool) => String(tool.id ?? tool.name ?? ""))
-          .filter((id) => id.startsWith(prefix))
+          .filter((id) => ownerOf(id, allByNormalized.keys()) === normalize(server))
           .map((id) => id.slice(prefix.length))
         if (names.length > 0) lines.push(`- ${server}: ${names.sort().join(", ")}`)
       }
@@ -407,9 +428,8 @@ export default {
           else if (Array.isArray(message.content)) message.content = message.content.map((part: any) => filterPart(part, hidden))
         }
         for (const name of Object.keys(event.tools ?? {})) {
-          for (const [normalized, server] of byNormalized) {
-            if (name.startsWith(`${normalized}_`) && hidden(server)) delete event.tools[name]
-          }
+          const server = toolOwner(name)
+          if (server !== undefined && hidden(server)) delete event.tools[name]
         }
       } catch (error) {
         log(directory, `filter failed, prompt left as is: ${error}`)
@@ -419,9 +439,8 @@ export default {
 
     const serversInCall = (tool: string, input: any) => {
       const found = new Set<string>()
-      for (const [normalized, server] of byNormalized) {
-        if (tool.startsWith(`${normalized}_`)) found.add(server)
-      }
+      const owner = toolOwner(tool)
+      if (owner !== undefined) found.add(owner)
       const code = typeof input?.code === "string" ? input.code : ""
       for (const match of code.matchAll(CODEMODE_REF)) {
         const server = byNormalized.get(match[1] ?? match[2] ?? "")
@@ -437,7 +456,8 @@ export default {
       const mine = sessions.get(sessionID)
       // Code Mode reports each MCP call inside `execute` under the server's own tool name
       // (e.g. `everything_echo`), so the check sits on the real call, not on code parsing.
-      const direct = servers.filter((server) => event.tool.startsWith(`${normalize(server)}_`))
+      const owner = toolOwner(event.tool)
+      const direct = owner === undefined ? [] : [owner]
       const blocked = direct.filter((server) => !mine?.has(server))
       if (blocked.length > 0) {
         const hint = blocked.map((server) => groupsOf(server)[0] ?? server)

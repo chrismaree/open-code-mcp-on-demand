@@ -194,6 +194,9 @@ One `mcp_connect` call. Connecting or dropping a server changes this session's p
 **A server shows as disabled even after `mcp_connect`?**
 `mcp_connect` checks OpenCode's actual server state and reloads whenever a requested server is not enabled, then retries once if it is still disabled, so a stale view in the plugin cannot leave a server stuck. Servers that failed or need sign-in are reported as such; reloading would not fix them.
 
+**Can servers share a name prefix, like `firecrawl` and `firecrawl_lab`?**
+Yes. OpenCode names a server's tools `<server>_<tool>`, and the plugin credits each tool to the server with the longest matching name, so `firecrawl_lab_firecrawl_scrape` belongs to `firecrawl_lab` only and works without `firecrawl` connected.
+
 **What if OpenCode changes how it renders the catalog?**
 The filters only remove blocks they recognise exactly (`- name (N tools …)` catalog entries and `<server name="…">` instruction blocks). Anything else is left as is, so a format change means extra text in the prompt, never a broken one. Calls to other sessions' servers are still refused.
 

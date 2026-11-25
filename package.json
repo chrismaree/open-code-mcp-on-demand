@@ -1,6 +1,6 @@
 {
   "name": "opencode-mcp-on-demand",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "OpenCode plugin: MCP servers stay dormant until your agent needs them.",
   "type": "module",
   "exports": {
